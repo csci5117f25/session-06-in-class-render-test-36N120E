@@ -7,6 +7,10 @@ name = "pypi"
 flask = "*"
 gunicorn = "*"
 psycopg2-binary = "*"
+sqlalchemy = "*"
+flask-sqlalchemy = "*"
+geoalchemy2 = "*"
+python-dotenv = "*"
 
 [dev-packages]
 
