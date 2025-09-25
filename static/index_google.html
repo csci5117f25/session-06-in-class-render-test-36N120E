@@ -1,0 +1,144 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>WebGIS Starter - Google Maps</title>
+    <style>
+        body {
+            margin: 0
+        }
+
+        #map {
+            height: 100vh
+        }
+
+        .panel {
+            position: absolute;
+            z-index: 1000;
+            top: 10px;
+            left: 10px;
+            background: #fff;
+            padding: 8px;
+            border-radius: 8px
+        }
+
+        .panel input {
+            width: 180px
+        }
+    </style>
+</head>
+
+<body>
+    <div class="panel">
+        <input id="q" placeholder="Search name..." />
+        <label><input type="checkbox" class="cat" value="cafe" checked> cafe</label>
+        <label><input type="checkbox" class="cat" value="park" checked> park</label>
+        <label><input type="checkbox" class="cat" value="museum" checked> museum</label>
+        <button id="near">Near Me</button>
+    </div>
+    <div id="map"></div>
+    <script src="/config.js"></script>
+    <script>
+        // avoid spamming requests
+        const debounce = (fn, delay = 300) => {
+            let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
+        };
+
+        // read selected categories
+        const getCats = () => [...document.querySelectorAll('.cat:checked')].map(x => x.value);
+
+        // if no category is selected, clear the layer and return null
+        const ensureCatsOrClear = (clearFn) => {
+            const cats = getCats();
+            if (cats.length === 0) { clearFn(); return null; }
+            return cats;
+        };
+
+        let info;
+        window.initMap = function () {
+            const map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 44.9778, lng: -93.2650 }, zoom: 13
+            });
+            new google.maps.Marker({ position: { lat: 44.9778, lng: -93.2650 }, map, title: 'Hello' });
+
+            info = new google.maps.InfoWindow();
+
+            function clearData() { map.data.forEach(f => map.data.remove(f)); }
+
+            function buildURL() {
+                const cats = ensureCatsOrClear(clearData);
+                if (!cats) return null;
+                const b = map.getBounds(); if (!b) return null;
+                const sw = b.getSouthWest(), ne = b.getNorthEast();
+                const q = document.getElementById('q').value.trim();
+                const params = new URLSearchParams();
+                params.set('bbox', [sw.lng(), sw.lat(), ne.lng(), ne.lat()].join(','));
+                params.set('category', cats.join(','));
+                if (q) params.set('q', q);
+                params.set('limit', 500);
+                return `/api/places?${params.toString()}`;
+            }
+
+            function reload() {
+                const url = buildURL(); if (!url) return;
+                clearData();
+                map.data.loadGeoJson(url, null, (features) => {
+                    console.log('Loaded features:', features.length);
+                });
+                map.data.setStyle(f => {
+                    const cat = f.getProperty('category');
+                    const color = cat === 'cafe' ? '#ff7f0e' : cat === 'park' ? '#2ca02c' : '#1f77b4';
+                    return { icon: { path: google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: color, fillOpacity: 1, strokeWeight: 0 } };
+                });
+            }
+
+            map.data.addListener('click', e => {
+                const p = e.feature;
+                info.setContent(`${p.getProperty('name')} (${p.getProperty('category')}) ⭐${p.getProperty('rating')}`);
+                info.setPosition(e.latLng);
+                info.open(map);
+            });
+
+            document.getElementById('q').addEventListener('input', debounce(reload, 300));
+            document.querySelectorAll('.cat').forEach(cb => cb.addEventListener('change', reload));
+            google.maps.event.addListenerOnce(map, 'idle', reload);
+            map.addListener('idle', reload);
+
+            document.getElementById('near').onclick = () => {
+                navigator.geolocation.getCurrentPosition(async pos => {
+                    const lng = pos.coords.longitude, lat = pos.coords.latitude;
+                    new google.maps.Marker({ position: { lat, lng }, map, title: 'You are here' });
+                    map.setCenter({ lat, lng }); map.setZoom(14);
+                    clearData();
+                    for (const r of [1200, 5000, 20000, 50000]) {
+                        const url = `/api/nearby?lng=${lng}&lat=${lat}&radius_m=${r}`;
+                        map.data.loadGeoJson(url, null, (features) => {
+                            if (features && features.length) return; // loaded
+                        });
+
+                        await new Promise(res => setTimeout(res, 300));
+                        if ([...map.data.features || []].length) return;
+                    }
+                    alert('No nearby places found');
+                }, err => alert('Failed Locating: ' + err.message));
+            };
+
+            fetch('/seed');
+        };
+
+        (function loadGoogle() {
+            const key = window.CONFIG && window.CONFIG.GOOGLE_MAPS_KEY;
+            if (!key) { alert('GOOGLE_MAPS_KEY undefined'); return; }
+            const s = document.createElement('script');
+
+            s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&callback=initMap`;
+            s.async = true; s.defer = true;
+            s.onerror = () => alert('Google Maps JS load error - please check your API key and internet connection');
+            document.head.appendChild(s);
+        })();
+
+    </script>
+</body>
+
+</html>

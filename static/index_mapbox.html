@@ -1,0 +1,131 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>WebGIS Starter - Mapbox</title>
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.5.1/mapbox-gl.css" rel="stylesheet" />
+    <style>
+        body {
+            margin: 0
+        }
+
+        #map {
+            height: 100vh
+        }
+
+        .panel {
+            position: absolute;
+            z-index: 1000;
+            top: 10px;
+            left: 10px;
+            background: #fff;
+            padding: 8px;
+            border-radius: 8px
+        }
+
+        .panel input {
+            width: 180px
+        }
+    </style>
+</head>
+
+<body>
+    <div class="panel">
+        <input id="q" placeholder="Search name..." />
+        <label><input type="checkbox" class="cat" value="cafe" checked> cafe</label>
+        <label><input type="checkbox" class="cat" value="park" checked> park</label>
+        <label><input type="checkbox" class="cat" value="museum" checked> museum</label>
+        <button id="near">Near Me</button>
+    </div>
+    <div id="map"></div>
+
+    <script src="/config.js"></script>
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.5.1/mapbox-gl.js"></script>
+    <script>
+        // avoid spamming requests
+        const debounce = (fn, delay = 300) => {
+            let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
+        };
+
+        // read selected categories
+        const getCats = () => [...document.querySelectorAll('.cat:checked')].map(x => x.value);
+
+        // if no category is selected, clear the layer and return null
+        const ensureCatsOrClear = (clearFn) => {
+            const cats = getCats();
+            if (cats.length === 0) { clearFn(); return null; }
+            return cats;
+        };
+
+        mapboxgl.accessToken = window.CONFIG.MAPBOX_KEY;
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/streets-v12',
+            center: [-93.2650, 44.9778], zoom: 13
+        });
+
+        function clearSource() {
+            if (map.getSource('places')) map.getSource('places').setData({ "type": "FeatureCollection", "features": [] });
+        }
+
+        function buildURL() {
+            const cats = ensureCatsOrClear(clearSource);
+            if (!cats) return null;
+            const b = map.getBounds().toArray().flat();
+            const q = document.getElementById('q').value.trim();
+            const params = new URLSearchParams();
+            params.set('bbox', [b[0], b[1], b[2], b[3]].join(','));
+            params.set('category', cats.join(','));
+            if (q) params.set('q', q);
+            params.set('limit', 500);
+            return `/api/places?${params.toString()}`;
+        }
+
+        async function reload() {
+            const url = buildURL(); if (!url) return;
+            const fc = await fetch(url).then(r => r.json());
+            if (map.getSource('places')) map.getSource('places').setData(fc);
+            else {
+                map.addSource('places', { type: 'geojson', data: fc });
+                map.addLayer({
+                    id: 'places-circle', type: 'circle', source: 'places',
+                    paint: {
+                        'circle-radius': 6,
+                        'circle-color': ['match', ['get', 'category'],
+                            'cafe', '#ff7f0e', 'park', '#2ca02c', 'museum', '#1f77b4', '#999']
+                    }
+                });
+                map.on('click', 'places-circle', e => {
+                    const p = e.features[0].properties;
+                    new mapboxgl.Popup().setLngLat(e.lngLat)
+                        .setHTML(`${p.name} (${p.category}) ⭐${p.rating}`).addTo(map);
+                });
+            }
+        }
+        document.getElementById('q').addEventListener('input', debounce(reload, 300));
+        document.querySelectorAll('.cat').forEach(cb => cb.addEventListener('change', reload));
+        map.on('moveend', reload);
+
+        document.getElementById('near').onclick = () => {
+            navigator.geolocation.getCurrentPosition(async pos => {
+                const lng = pos.coords.longitude, lat = pos.coords.latitude;
+                new mapboxgl.Marker().setLngLat([lng, lat]).addTo(map);
+                map.flyTo({ center: [lng, lat], zoom: 14 });
+                for (const r of [1200, 5000, 20000, 50000]) {
+                    const fc = await fetch(`/api/nearby?lng=${lng}&lat=${lat}&radius_m=${r}`).then(r => r.json());
+                    if (fc.features && fc.features.length) {
+                        if (map.getSource('places')) map.getSource('places').setData(fc);
+                        return;
+                    }
+                }
+                clearSource(); alert('No nearby places found');
+            }, err => alert('Failed locating: ' + err.message));
+        };
+
+        fetch('/seed').finally(() => map.once('load', reload));
+
+    </script>
+</body>
+
+</html>

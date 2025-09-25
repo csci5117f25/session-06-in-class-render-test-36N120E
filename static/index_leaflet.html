@@ -1,0 +1,121 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>WebGIS Starter - Leaflet</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        body {
+            margin: 0
+        }
+
+        #map {
+            height: 100vh
+        }
+
+        .panel {
+            position: absolute;
+            z-index: 1000;
+            top: 10px;
+            left: 10px;
+            background: #fff;
+            padding: 8px;
+            border-radius: 8px
+        }
+
+        .panel input {
+            width: 180px
+        }
+    </style>
+</head>
+
+<body>
+    <div class="panel">
+        <input id="q" placeholder="Search name..." />
+        <label><input type="checkbox" class="cat" value="cafe" checked> cafe</label>
+        <label><input type="checkbox" class="cat" value="park" checked> park</label>
+        <label><input type="checkbox" class="cat" value="museum" checked> museum</label>
+        <button id="near">Near Me</button>
+    </div>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script>
+        // avoid spamming requests
+        const debounce = (fn, delay = 300) => {
+            let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
+        };
+
+        // read selected categories
+        const getCats = () => [...document.querySelectorAll('.cat:checked')].map(x => x.value);
+
+        // if no category is selected, clear the layer and return null
+        const ensureCatsOrClear = (clearFn) => {
+            const cats = getCats();
+            if (cats.length === 0) { clearFn(); return null; }
+            return cats;
+        };
+
+        const map = L.map('map').setView([44.9778, -93.2650], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            { attribution: '© OpenStreetMap' }).addTo(map);
+
+        let layer = L.geoJSON().addTo(map);
+        let you; // your location marker
+
+        function clearLayer() {
+            layer.clearLayers();
+        }
+
+        function buildURL() {
+            const cats = ensureCatsOrClear(clearLayer);
+            if (!cats) return null;
+            const b = map.getBounds();
+            const q = document.getElementById('q').value.trim();
+            const params = new URLSearchParams();
+            params.set('bbox', [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(','));
+            params.set('category', cats.join(','));
+            if (q) params.set('q', q);
+            params.set('limit', 500);
+            return `/api/places?${params.toString()}`;
+        }
+
+        async function reload() {
+            const url = buildURL(); if (!url) return;
+            const fc = await fetch(url).then(r => r.json());
+            layer.clearLayers();
+            layer.addData(fc).eachLayer(l => {
+                const p = l.feature.properties;
+                l.bindPopup(`${p.name} (${p.category}) ⭐${p.rating}`);
+            });
+        }
+
+        document.getElementById('q').addEventListener('input', debounce(reload, 300));
+        document.querySelectorAll('.cat').forEach(cb => cb.addEventListener('change', reload));
+        map.on('moveend', reload);
+
+        // Near Me
+        document.getElementById('near').onclick = () => {
+            navigator.geolocation.getCurrentPosition(async pos => {
+                const lng = pos.coords.longitude, lat = pos.coords.latitude;
+                if (you) map.removeLayer(you);
+                you = L.marker([lat, lng]).addTo(map).bindPopup('You are here');
+                map.setView([lat, lng], 14);
+                for (const r of [1200, 5000, 20000, 50000]) {
+                    const fc = await fetch(`/api/nearby?lng=${lng}&lat=${lat}&radius_m=${r}`).then(r => r.json());
+                    if (fc.features && fc.features.length) {
+                        layer.clearLayers(); layer.addData(fc);
+                        return;
+                    }
+                }
+                layer.clearLayers(); alert('No nearby places found');
+            }, err => alert('failed locating: ' + err.message));
+        };
+
+        fetch('/seed').finally(reload);
+
+    </script>
+</body>
+
+</html>
