@@ -6,6 +6,6 @@ app = Flask(__name__)
 def index():
     return "Hello from Render!"
 
-@app.route('/hello')
+@app.route('/app')
 def hello(name=None):
     return render_template('hello.html', name=name)
