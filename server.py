@@ -31,6 +31,10 @@ def create_app():
     @app.route("/")
     def index():
         return "Hello from Render + PostGIS!"
+    
+    @app.route('/hello')
+    def hello(name=None):
+        return render_template('hello.html', name=name)
 
     @app.route("/add_demo")
     def add_demo():
